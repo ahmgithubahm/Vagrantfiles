@@ -1,0 +1,142 @@
+# -*- mode: ruby -*-
+# vi: set ft=ruby :
+
+class VagrantPlugins::ProviderVirtualBox::Action::SetName
+  alias_method :original_call, :call
+  def call(env)
+    machine = env[:machine]
+    driver = machine.provider.driver
+    uuid = driver.instance_eval { @uuid }
+    ui = env[:ui]
+
+    # Find out folder of VM
+    vm_folder = ""
+    vm_info = driver.execute("showvminfo", uuid, "--machinereadable")
+    lines = vm_info.split("\n")
+    lines.each do |line|
+      if line.start_with?("CfgFile")
+        vm_folder = line.split("=")[1].gsub('"','')
+        vm_folder = File.expand_path("..", vm_folder)
+        ui.info "VM Folder is: #{vm_folder}"
+      end
+    end
+
+    size = 15360
+    disk_file = vm_folder + "/sdb.vmdk"
+
+    ui.info "Adding disk to VM"
+    if File.exist?(disk_file)
+      ui.info "Disk already exists"
+    else
+      ui.info "Creating new disk"
+      driver.execute("createmedium", "disk", "--filename", disk_file, "--size", "#{size}", "--format", "VMDK")
+    end
+    ui.info "Attaching disk to VM"
+    driver.execute('storageattach', uuid, '--storagectl', "IDE Controller", '--device', "0", '--port', "1", '--type', 'hdd', '--medium', disk_file)
+
+    original_call(env)
+  end
+end
+
+
+# All Vagrant configuration is done below. The "2" in Vagrant.configure
+# configures the configuration version (we support older styles for
+# backwards compatibility). Please don't change it unless you know what
+# you're doing.
+Vagrant.configure("2") do |config|
+  # The most common configuration options are documented and commented below.
+  # For a complete reference, please see the online documentation at
+  # https://docs.vagrantup.com.
+
+  # Every Vagrant development environment requires a box. You can search for
+  # boxes at https://vagrantcloud.com/search.
+  config.vm.box = "geerlingguy/ubuntu1804"
+
+  # Disable automatic box update checking. If you disable this, then
+  # boxes will only be checked for updates when the user runs
+  # `vagrant box outdated`. This is not recommended.
+  # config.vm.box_check_update = false
+
+  # Create a forwarded port mapping which allows access to a specific port
+  # within the machine from a port on the host machine. In the example below,
+  # accessing "localhost:8080" will access port 80 on the guest machine.
+  # NOTE: This will enable public access to the opened port
+  # config.vm.network "forwarded_port", guest: 80, host: 8080
+
+  # Create a forwarded port mapping which allows access to a specific port
+  # within the machine from a port on the host machine and only allow access
+  # via 127.0.0.1 to disable public access
+  # config.vm.network "forwarded_port", guest: 80, host: 8080, host_ip: "127.0.0.1"
+
+  # Create a private network, which allows host-only access to the machine
+  # using a specific IP.
+  # config.vm.network "private_network", ip: "192.168.33.10"
+
+  # Create a public network, which generally matched to bridged network.
+  # Bridged networks make the machine appear as another physical device on
+  # your network.
+  config.vm.network "public_network", use_dhcp_assigned_default_route: true
+
+  # Share an additional folder to the guest VM. The first argument is
+  # the path on the host to the actual folder. The second argument is
+  # the path on the guest to mount the folder. And the optional third
+  # argument is a set of non-required options.
+  # config.vm.synced_folder "../data", "/vagrant_data"
+
+  # Provider-specific configuration so you can fine-tune various
+  # backing providers for Vagrant. These expose provider-specific options.
+  # Example for VirtualBox:
+  #
+  config.vm.provider "virtualbox" do |vb|
+  #   # Display the VirtualBox GUI when booting the machine
+  #   vb.gui = true
+  #
+    # Customize the amount of memory on the VM
+    vb.memory = "1536"
+    # Customize the name
+    vb.name = "u18-1"
+    # Set the MAC address of the second (bridged) NIC
+    vb.customize ["modifyvm", :id, "--macaddress2", "EE00232740C2"]
+  end
+
+  # View the documentation for the provider you are using for more
+  # information on available options.
+
+  # Enable provisioning with a shell script. Additional provisioners such as
+  # Puppet, Chef, Ansible, Salt, and Docker are also available. Please see the
+  # documentation for more information about their specific syntax and use.
+  config.vm.provision "shell", inline: <<-SHELL1
+    echo "#-#-#-#-#-#-#-# Adding ansible user"
+    getent group ansible 1>/dev/null || groupadd --gid 997 ansible
+    getent passwd ansible 1>/dev/null || useradd --comment 'ansible user (created by vagrant)' --create-home --shell /bin/bash --gid ansible --groups sudo --uid 997 --password '$6$xoSdKi/VmnfU5Y4x$jMuS4ahjCOqfJrg548E9XNgknv3RDVj9IoFToev8O9Ya5ERiP2bOTbwXVqEyf7wJXZFkYbbc08ae4s9vENv85.' ansible
+    mkdir -p ~ansible/.ssh
+    echo 'ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQCtyWQ7krYkSw2bYG6PCkqNqhDWfi2mjMnUKG6dvFRzbNyY0Yt2+izFBJQmlC72WX+Ht1K/7btSxdgChqcrTGdZTB1pTN2v3D2UWgaLRSFCEvVWNciFd+kfgUF7lPJuE1TktUnJWqxuxqBBm0lPVLgT+IW0vhUOAbi53HaasWU/+MGIRougmL0GIW6ppha/+fL39/4opVI9FJzsJv9Lid2tfJiLY5fNjR2lgb6tzFxWuxudUSJ3PkcepBJdB9hTsVVRn+gC4lvUnugoOrtpnF51G7hKwb2StHTD5icKYYHd1OyiKFSVqKDmcssEkkWPB9Vk3xv92cNG+KkYBcshyJBl ansible2@depoel' >> ~ansible/.ssh/authorized_keys
+    chmod 700 ~ansible/.ssh
+    chmod 600 ~ansible/.ssh/authorized_keys
+    chown -R ansible: ~ansible/.ssh
+
+    echo "#-#-#-#-#-#-#-# Prepare for installing ZFS"
+    add-apt-repository --yes 'ppa:jonathonf/zfs'
+    apt-get update
+
+    echo "#-#-#-#-#-#-#-# Installing misc packages"
+    apt-get --yes install ncdu htop
+
+    echo "#-#-#-#-#-#-#-# Installing HWE kernel"
+    DEBIAN_FRONTEND=noninteractive apt-get --yes --option Dpkg::Options::="--force-confdef" --option Dpkg::Options::="--force-confold" install --install-recommends linux-generic-hwe-18.04 linux-source-4.18.0
+  SHELL1
+  config.vm.provision :reload
+  config.vm.provision "shell", inline: <<-SHELL2
+    echo "#-#-#-#-#-#-#-# Removing old kernel packages"
+    dpkg-query -l | egrep ' linux-.*4\.15\.0' | fgrep -v ' linux-libc-dev' | awk '{print $2 ; }' | xargs -r apt-get --yes purge
+
+    echo "#-#-#-#-#-#-#-# Updating all packages"
+    DEBIAN_FRONTEND=noninteractive apt-get --yes --option Dpkg::Options::="--force-confdef" --option Dpkg::Options::="--force-confold" dist-upgrade
+
+    echo "#-#-#-#-#-#-#-# Installing ZFS"
+    DEBIAN_FRONTEND=noninteractive apt-get --yes --option Dpkg::Options::="--force-confdef" --option Dpkg::Options::="--force-confold" install zfs-dkms
+    cp -al /usr/share/bash-completion/completions/zfs /etc/bash_completion.d/
+    echo "#-#-#-#-#-#-#-# Tidying up old package stuff"
+    apt-get --yes --purge autoremove
+  SHELL2
+end
