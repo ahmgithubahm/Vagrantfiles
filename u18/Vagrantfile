@@ -92,7 +92,9 @@ Vagrant.configure("2") do |config|
   #   vb.gui = true
   #
     # Customize the amount of memory on the VM
-    vb.memory = "1536"
+    vb.memory = 1536
+    # Customize the VM's CPU count
+    vb.cpus = 1
     # Customize the name
     vb.name = "u18-1"
     # Set the MAC address of the second (bridged) NIC
